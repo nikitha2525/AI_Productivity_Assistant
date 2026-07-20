@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 
 // This route is the single backend endpoint used by all three features.
 // It receives { feature, payload } from the client, builds an appropriate
-// prompt, calls the Google Gemini API (free tier, no credit card needed),
-// and returns the generated text.
+// prompt, calls the Groq API (free tier, no credit card needed, OpenAI-
+// compatible chat completions format), and returns the generated text.
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
-const GEMINI_API_URL = (model, apiKey) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 
 function buildPrompt(feature, payload) {
   switch (feature) {
@@ -80,12 +79,12 @@ export async function POST(request) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "Server is missing GEMINI_API_KEY. Add it in your Vercel project's Environment Variables (see README).",
+            "Server is missing GROQ_API_KEY. Add it in your Vercel project's Environment Variables (see README).",
         },
         { status: 500 }
       );
@@ -93,20 +92,17 @@ export async function POST(request) {
 
     const model = process.env.AI_MODEL || DEFAULT_MODEL;
 
-    const response = await fetch(GEMINI_API_URL(model, apiKey), {
+    const response = await fetch(GROQ_API_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          maxOutputTokens: 1500,
-          temperature: 0.7,
-        },
+        model,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 1500,
+        temperature: 0.7,
       }),
     });
 
@@ -119,11 +115,7 @@ export async function POST(request) {
     }
 
     const data = await response.json();
-    const result =
-      data?.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text || "")
-        .join("\n")
-        .trim() || "";
+    const result = data?.choices?.[0]?.message?.content?.trim() || "";
 
     if (!result) {
       return NextResponse.json(
