@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 
 // This route is the single backend endpoint used by all three features.
 // It receives { feature, payload } from the client, builds an appropriate
-// prompt, calls the Claude API, and returns the generated text.
+// prompt, calls the Google Gemini API (free tier, no credit card needed),
+// and returns the generated text.
 
-const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MODEL = "claude-sonnet-5";
+const DEFAULT_MODEL = "gemini-2.5-flash";
+const GEMINI_API_URL = (model, apiKey) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
 function buildPrompt(feature, payload) {
   switch (feature) {
@@ -78,28 +80,33 @@ export async function POST(request) {
       );
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "Server is missing ANTHROPIC_API_KEY. Add it in your Vercel project's Environment Variables (see README).",
+            "Server is missing GEMINI_API_KEY. Add it in your Vercel project's Environment Variables (see README).",
         },
         { status: 500 }
       );
     }
 
-    const response = await fetch(ANTHROPIC_API_URL, {
+    const model = process.env.AI_MODEL || DEFAULT_MODEL;
+
+    const response = await fetch(GEMINI_API_URL(model, apiKey), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: process.env.AI_MODEL || DEFAULT_MODEL,
-        max_tokens: 1500,
-        messages: [{ role: "user", content: prompt }],
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens: 1500,
+          temperature: 0.7,
+        },
       }),
     });
 
@@ -112,10 +119,18 @@ export async function POST(request) {
     }
 
     const data = await response.json();
-    const textBlocks = (data.content || [])
-      .filter((block) => block.type === "text")
-      .map((block) => block.text);
-    const result = textBlocks.join("\n").trim();
+    const result =
+      data?.candidates?.[0]?.content?.parts
+        ?.map((p) => p.text || "")
+        .join("\n")
+        .trim() || "";
+
+    if (!result) {
+      return NextResponse.json(
+        { error: "The model returned an empty response. Try rephrasing your input." },
+        { status: 502 }
+      );
+    }
 
     return NextResponse.json({ result });
   } catch (err) {
@@ -125,4 +140,3 @@ export async function POST(request) {
     );
   }
 }
-
